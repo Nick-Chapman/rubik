@@ -1,0 +1,38 @@
+name:                rubik
+version:             0.1.0.0
+description:         Solving the rubik's cube, using search.
+license:             BSD3
+author:              Nick Chapman
+maintainer:          nic@amadido.co.uk
+github:              https://github.com/Nick-Chapman/rubik.git
+
+extra-source-files:
+- README.md
+
+dependencies:
+- base >= 4.7 && < 5
+
+default-extensions:
+- GADTs
+- GeneralizedNewtypeDeriving
+- InstanceSigs
+- LambdaCase
+- MultiWayIf
+- NamedFieldPuns
+- NondecreasingIndentation
+- NumericUnderscores
+- RankNTypes
+- ScopedTypeVariables
+
+ghc-options:
+- -Werror
+- -Wall
+- -Wno-name-shadowing
+- -threaded
+- -rtsopts
+- -with-rtsopts=-N
+
+executables:
+  rubik.exe:
+    main:                Main.hs
+    source-dirs:         src
