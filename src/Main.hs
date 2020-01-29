@@ -1,7 +1,7 @@
 
 module Main (main) where
 
-import Prelude hiding (Left,Right)
+--import Prelude hiding (Left,Right)
 import System.Environment (getArgs)
 
 main :: IO ()
@@ -9,7 +9,14 @@ main = do
   args <- getArgs
   putStrLn $ "rubik: " <> show args
   putStrLn $ unlines (prettyState solvedState)
-  putStrLn $ unlines (prettyState (clock Up (clock Front solvedState)))
+  putStrLn $ unlines (prettyState (clock F solvedState))
+  putStrLn $ unlines (prettyState (clock B solvedState))
+  putStrLn $ unlines (prettyState (clock U solvedState))
+  putStrLn $ unlines (prettyState (clock D solvedState))
+  putStrLn $ unlines (prettyState (clock L solvedState))
+  putStrLn $ unlines (prettyState (clock R solvedState))
+
+data Dim = X | Y | Z
 
 data Col = White | Yellow | Blue | Green | Red | Orange deriving Show
 
@@ -17,7 +24,7 @@ data CornerOrientation = Xyz | Xzy | Yxz | Yzx | Zxy | Zyx
 
 data CornerPiece = WBR | WBO | WGR | WGO | YBR | YBO | YGR | YGO
 
-data Face = Front | Back | Up | Down | Left | Right
+data Face = F | B | U | D | L | R
 
 type OC = (CornerPiece,CornerOrientation)
 
@@ -37,76 +44,53 @@ solvedState = State
 
 clock :: Face -> State -> State
 clock = \case
-  Front -> \state@State{ful=a,fur=b,fdr=c,fdl=d} -> state {ful=z d,fur=z a,fdr=z b,fdl=z c}
-  Back  -> \state@State{bur=a,bul=b,bdl=c,bdr=d} -> state {bur=z d,bul=z a,bdl=z b,bdr=z c}
-  Up    -> \state@State{bul=a,bur=b,fur=c,ful=d} -> state {bul=y d,bur=y a,fur=y b,ful=y c}
-  Down  -> \state@State{fdl=a,fdr=b,bdr=c,bdl=d} -> state {fdl=y d,fdr=y a,bdr=y b,bdl=y c}
-  Left  -> \state@State{bul=a,ful=b,fdl=c,bdl=d} -> state {bul=x d,ful=x a,fdl=x b,bdl=x c}
-  Right -> \state@State{fur=a,bur=b,bdr=c,fdr=d} -> state {fur=x d,bur=x a,bdr=x b,fdr=x c}
+  F -> \state@State{ful=a,fur=b,fdr=c,fdl=d} -> state {ful=z d,fur=z a,fdr=z b,fdl=z c}
+  B -> \state@State{bur=a,bul=b,bdl=c,bdr=d} -> state {bur=z d,bul=z a,bdl=z b,bdr=z c}
+  U -> \state@State{bul=a,bur=b,fur=c,ful=d} -> state {bul=y d,bur=y a,fur=y b,ful=y c}
+  D -> \state@State{fdl=a,fdr=b,bdr=c,bdl=d} -> state {fdl=y d,fdr=y a,bdr=y b,bdl=y c}
+  L -> \state@State{bul=a,ful=b,fdl=c,bdl=d} -> state {bul=x d,ful=x a,fdl=x b,bdl=x c}
+  R -> \state@State{fur=a,bur=b,bdr=c,fdr=d} -> state {fur=x d,bur=x a,bdr=x b,fdr=x c}
   where
-    x (piece,orientation) = (piece,rotateX orientation)
-    y (piece,orientation) = (piece,rotateY orientation)
-    z (piece,orientation) = (piece,rotateZ orientation)
+    x (piece,orientation) = (piece,rotate X orientation)
+    y (piece,orientation) = (piece,rotate Y orientation)
+    z (piece,orientation) = (piece,rotate Z orientation)
 
-rotateX :: CornerOrientation -> CornerOrientation
-rotateX = \case
-  Xyz -> Xzy
-  Xzy -> Xyz
-  Yxz -> Zxy
-  Yzx -> Zyx
-  Zxy -> Yxz
-  Zyx -> Yzx
-
-rotateY :: CornerOrientation -> CornerOrientation
-rotateY = \case
-  Xyz -> Zyx
-  Xzy -> Zxy
-  Yxz -> Yzx
-  Yzx -> Yxz
-  Zxy -> Xzy
-  Zyx -> Xyz
-
-rotateZ :: CornerOrientation -> CornerOrientation
-rotateZ = \case
-  Xyz -> Yxz
-  Xzy -> Yzx
-  Yxz -> Xyz
-  Yzx -> Xzy
-  Zxy -> Zyx
-  Zyx -> Zxy
+rotate :: Dim -> CornerOrientation -> CornerOrientation
+rotate = \case
+  X -> \case Xyz -> Xzy; Xzy -> Xyz; Yxz -> Zxy; Yzx -> Zyx; Zxy -> Yxz; Zyx -> Yzx;
+  Y -> \case Xyz -> Zyx; Xzy -> Zxy; Yxz -> Yzx; Yzx -> Yxz; Zxy -> Xzy; Zyx -> Xyz;
+  Z -> \case Xyz -> Yxz; Xzy -> Yzx; Yxz -> Xyz; Yzx -> Xzy; Zxy -> Zyx; Zyx -> Zxy;
 
 ----------------------------------------------------------------------
 -- picturing the cube...
 
 prettyState :: State -> [String]
 prettyState state = concat
-  [ foldl1 beside [blank, p Up ]
-  , foldl1 beside [p Left,p Front,p Right,p Back]
-  , foldl1 beside [blank, p Down ]
+  [ foldl1 beside [blank, p U ]
+  , foldl1 beside [p L,   p F, p R,p B]
+  , foldl1 beside [blank, p D ]
   ] where
   blank = ["  ","  "]
   p = prettySquare . pictureFace state
   beside = zipWith $ \a b -> unwords [a,b]
 
 prettySquare :: Square -> [String]
-prettySquare (Square a b c d) = [[p a, p b],[p c, p d]] where p = prettyCol
+prettySquare (Square a b c d) = [[p a, p b],[p d, p c]] where p = prettyCol
 
 prettyCol :: Col -> Char
 prettyCol = head . show
 
--- TODO: make the SQuare be as viewed clockwise (to match other code places)
-data Square = Square Col Col Col Col -- square as we look at the face (viewing left->right, top->bottom)
-data Dim = X | Y | Z
+data Square = Square Col Col Col Col -- square viewed clockwise as we look at the face
 data Sticker = First | Second | Third
 
 pictureFace :: State -> Face -> Square
 pictureFace State {ful, fur, fdl, fdr, bul, bur, bdl, bdr} = \case
-    Front -> square Z ful fur fdl fdr
-    Back  -> square Z bur bul bdr bdl
-    Up    -> square Y bul bur ful fur
-    Down  -> square Y fdl fdr bdl bdr
-    Left  -> square X bul ful bdl fdl
-    Right -> square X fur bur fdr bdr
+    F -> square Z ful fur fdr fdl
+    B -> square Z bur bul bdl bdr
+    U -> square Y bul bur fur ful
+    D -> square Y fdl fdr bdr bdl
+    L -> square X bul ful fdl bdl
+    R -> square X fur bur bdr fdr
   where
 
 square :: Dim -> OC -> OC -> OC -> OC -> Square
