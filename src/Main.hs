@@ -3,80 +3,137 @@ module Main (main) where
 
 import Control.Monad (when)
 import Data.Map (Map)
---import Data.Set (Set)
+import Data.Set (Set)
 import Prelude hiding (Left,Right)
 import System.Environment (getArgs)
 import qualified Data.Map.Strict as Map
---import qualified Data.Set as Set
+import qualified Data.Set as Set
+
+----------------------------------------------------------------------
+{- TODO: experiments...
+
+- half turns as atomic moves: L2, R2.. etc
+- full cube turns at atomic moved : X, Y, Z, X', Y', Z'
+
+- only allow F/R/U - keeps cubie-bdl fixed in place, so getting 24x factor reduction in state space
+
+-- strict annotation in cube state types
+
+-- MAIN IDEA: dfs to find macro moves, which have reduced disturbance: 3,2,1
+
+-}
+----------------------------------------------------------------------
 
 main :: IO ()
 main = do
   args <- getArgs
   putStrLn $ "rubik: " <> show args
 
-  -- 7...
-  --let scambleSequence = [R,U,L,R,B,L',U'] -- (track expanded: 2120 steps, 1.7s)
+  let desc = parseArgs desc0 args
+  print desc
 
-  -- 8..
-  --let scambleSequence = [R,U,L,R,B,L',U',F] -- (track expanded 20785 steps, 3m25)
+  let Desc{scrambleLength,atomicMoves} = desc
+  let graph = mkGraph atomicMoves
+  let scrambleSequence = take scrambleLength [R,U,L,R,B,L',U',F,D,F] -- TODO: need more for >10
+  let scrambledState = foldl applyMove solvedState scrambleSequence
 
-  -- dont track expanded...
-  --let scambleSequence = [R,U,L,R,B,L',U',F] -- 26025 steps, (see 100: 4.7s) (see 1000; 1.8s)
-
-  -- 9..
-  let scambleSequence = [R,U,L,R,B,L',U',F,D] -- 453730 steps, 1m40
-  -- only view every 100,000 steps -> 26s
-  -- ok, so counting the frontier size is expensive.
-  -- but nice to know, so instead lets track it exlicitly
-  -- -> 18s
-  -- -> 17s (remove expanded/frontierSize entirely)
-  -- -> 15s (some strictness annotations)
-
-  -- 10.. nope!! blows the fans!
-  --let scambleSequence = [R,U,L,R,B,L',U',F,D,F]
-
-  let scrambledState = foldl move solvedState scambleSequence
+  print scrambleSequence
   putStrLn $ unlines (_prettyState scrambledState)
-  print (distance solvedState scrambledState)
 
-  let links = _allMoves
-
-  (i,sol) <- viewSearch (mkGraph links) scrambledState
+  (i,sol) <- viewSearch desc graph scrambledState
 
   putStrLn $ concat["Found solution: ", show sol, ", in ", show i, " steps."]
   let (Elem Path{inReverse=steps} _) = sol
-  let final = foldl move scrambledState (reverse steps)
-  print (final == solvedState)
+  let final = foldl applyMove scrambledState (reverse steps)
+  putStrLn $ "Check: " <> show (final == solvedState)
   putStrLn $ unlines (_prettyState final)
 
+----------------------------------------------------------------------
 
--- using path-length + distance-to-target heuristic
-computeScore :: Elem -> Score
-computeScore (Elem path state) = do
+data Heuristic = GH | JustG deriving Show
+
+data Desc = Desc
+  { scrambleLength :: Int
+  , atomicMoves :: [Move]
+  , seeSearchEvery :: Int
+  , trackExpanded :: Bool
+  , heuristic :: Heuristic
+  } deriving Show
+
+desc0 :: Desc
+desc0 = Desc
+  { scrambleLength = 8
+  , atomicMoves = _clocks ++ _antis
+  , seeSearchEvery = 10000
+  , trackExpanded = False
+  , heuristic = GH
+  }
+
+parseArgs :: Desc -> [String] -> Desc
+parseArgs desc = \case
+  [] -> desc
+  "-4":rest      -> parseArgs (desc { scrambleLength = 4 }) rest
+  "-5":rest      -> parseArgs (desc { scrambleLength = 5 }) rest
+  "-6":rest      -> parseArgs (desc { scrambleLength = 6 }) rest
+  "-7":rest      -> parseArgs (desc { scrambleLength = 7 }) rest
+  "-8":rest      -> parseArgs (desc { scrambleLength = 8 }) rest
+  "-9":rest      -> parseArgs (desc { scrambleLength = 9 }) rest
+  "-10":rest     -> parseArgs (desc { scrambleLength = 10 }) rest
+  "--len":n:rest -> parseArgs (desc { scrambleLength = read n }) rest
+
+  "--see":rest   -> parseArgs (desc { seeSearchEvery = 1 }) rest
+  "--k":rest     -> parseArgs (desc { seeSearchEvery = 1000 }) rest
+  "--10k":rest   -> parseArgs (desc { seeSearchEvery = 10000 }) rest
+  "--100k":rest  -> parseArgs (desc { seeSearchEvery = 100000 }) rest
+  "--mil":rest   -> parseArgs (desc { seeSearchEvery = 1000000 }) rest
+
+  "--ex":rest    -> parseArgs (desc { trackExpanded = True }) rest
+  "--bfs":rest   -> parseArgs (desc { heuristic = JustG }) rest
+
+  args -> error $ "parseArgs: " <> show args
+
+----------------------------------------------------------------------
+-- Heuristic
+
+computeScoreGH :: Elem -> Score
+computeScoreGH (Elem path state) = do
   let g = pathLength path
   let h = distance solvedState state
-  Score (g + h)
+  Score (g + h) -- using path-length + distance-to-target heuristic
 
-viewSearch :: Graph -> State -> IO (Int,Elem)
-viewSearch graph scrambled = loop 0 (mkInitSS scrambled)
+computeScoreG :: Elem -> Score
+computeScoreG (Elem path _) = do
+  let g = pathLength path
+  Score g
+
+computeScore :: Heuristic -> Elem -> Score
+computeScore = \case
+  GH -> computeScoreGH
+  JustG -> computeScoreG
+
+----------------------------------------------------------------------
+
+viewSearch :: Desc -> Graph -> State -> IO (Int,Elem)
+viewSearch desc@Desc{seeSearchEvery} graph scrambled = loop 0 (mkInitSS scrambled)
   where
     loop :: Int -> SS -> IO (Int,Elem)
     loop i ss = do
-      when (i `mod` 10000 == 0) $ see i ss;
-      case searchStep graph ss of
+      when (i `mod` seeSearchEvery == 0) $ see i ss;
+      case searchStep desc graph ss of
         Fail -> error "Search failed!"
         Success elem -> return (i,elem)
         Continue ss -> loop (i+1) ss
 
     see :: Int -> SS -> IO ()
-    see i SS {focus, frontier=_f
-             --, frontierSize=_fz
+    see i SS {focus, expanded=_x, frontier=_f
+             , frontierSize=_fz
              } = do
       print (i,
-             --Set.size expanded,
+             Set.size _x,
              focus,
-             _frontierKeys _f
-             --_fz -- frontierSize -- always (b-1) * i, where b is the #links
+             _frontierKeys _f,
+             --_frontierStats _f,
+             _fz -- always (b-1) * i, where b is the #links
             )
 
 ----------------------------------------------------------------------
@@ -118,7 +175,7 @@ data Graph = Graph { links :: State -> [(Move,State)]
                    , target :: State -> Bool }
 
 mkGraph :: [Move] -> Graph
-mkGraph moves = Graph { links = \s -> map (\m -> (m, move s m)) moves
+mkGraph moves = Graph { links = \s -> map (\m -> (m, applyMove s m)) moves
                       , target = \s -> s == solvedState
                       }
 ----------------------------------------------------------------------
@@ -129,12 +186,14 @@ newtype Frontier = Frontier (Map Score [Elem]) deriving (Show)
 _frontierKeys :: Frontier -> [Score]
 _frontierKeys (Frontier m) = Map.keys m
 
+_frontierStats :: Frontier -> [(Score,Int)]
+_frontierStats (Frontier m) = map (\(k,m) -> (k, length m)) (Map.toList m)
+
 emptyFrontier :: Frontier
 emptyFrontier = Frontier Map.empty
 
-extendFrontier :: Frontier -> Elem -> Frontier
-extendFrontier (Frontier m) e = do
-  let key = computeScore e
+extendFrontier :: Frontier -> Score -> Elem -> Frontier
+extendFrontier (Frontier m) key e = do
   Frontier (Map.alter (\case Nothing -> Just [e]
                              Just es -> Just (e:es)) key m)
 
@@ -147,57 +206,64 @@ pickFrontier (Frontier m) =
       e:es' -> Just (e, Frontier (Map.insert k es' m'))
 
 ----------------------------------------------------------------------
--- Search State, Search
+-- Search
 
-data SS = SS { focus :: !Elem
-             --, expanded :: Set State
-             , frontier :: !Frontier
-             -- , frontierSize :: Int
-             }
+data SS = SS -- Search State
+  { focus :: !Elem
+  , expanded :: !(Set State)
+  , frontier :: !Frontier
+  , frontierSize :: Int
+  }
 
 data SSK = Fail | Success Elem | Continue SS
 
 mkInitSS :: State -> SS
 mkInitSS scrambled = SS { focus = Elem emptyPath scrambled
-                        --, expanded = Set.empty
+                        , expanded = Set.empty
                         , frontier = emptyFrontier
-                        -- , frontierSize = 0
+                        , frontierSize = 0
                         }
 
-searchStep :: Graph -> SS -> SSK
-searchStep Graph{links,target} SS{focus = Elem path state,
-                                  --expanded = ex0,
-                                  frontier = fr0
-                                  --frontierSize -- = fz0
-                                 } =
+searchStep :: Desc -> Graph -> SS -> SSK
+searchStep
+  Desc{ trackExpanded
+      , heuristic
+      }
+  Graph{ links
+       , target
+       }
+  SS{ focus = Elem path state
+    , expanded = ex0
+    , frontier = fr0
+    , frontierSize = fz0
+    } =
 
   if target state then Success (Elem path state) else do
-    case pickFrontier fr1 of
+    case pickUnexpanded fr1 of
       Nothing -> Fail
       Just (focus,frontier) -> do
-        --let frontierSize = length newElems + fz0 - 1
+        let frontierSize = length newElems + fz0 - 1
         Continue $ SS { focus
-                      -- , expanded
+                      , expanded
                       , frontier
-                      -- , frontierSize
+                      , frontierSize
                       }
   where
-    --expanded = ex0 --Set.insert state ex0 -- DONT TRACK EXPANDED
-    --expanded = Set.insert state ex0 -- DO TRACK EXPANDED
+    expanded = if trackExpanded then Set.insert state ex0 else ex0
 
-    fr1 = foldl extendFrontier fr0 newElems
-    newElems = [ Elem (postPend path m) n | (m,n) <- links state] --, n `notElem` expanded]
+    fr1 = foldl extend fr0 newElems
+      where extend fr e = extendFrontier fr (computeScore heuristic e) e
 
-{-
+    newElems = [ Elem (postPend path m) n | (m,n) <- links state, n `notElem` expanded]
+
     pickUnexpanded :: Frontier -> Maybe (Elem,Frontier)
     pickUnexpanded frontier =
       case pickFrontier frontier of
         Nothing -> Nothing
-        Just res -> Just res
-        --Just res@(Elem _ _state, _frontier') ->
-          --if _state `notElem` expanded then Just res else
-            --pickUnexpanded _frontier'
--}
+        Just res@(Elem _ state, frontier') ->
+          -- dont understand how this True can reduce the #steps !
+          if True || state `notElem` expanded then Just res else
+            pickUnexpanded frontier'
 
 ----------------------------------------------------------------------
 -- moves
@@ -205,14 +271,17 @@ searchStep Graph{links,target} SS{focus = Elem path state,
 data Move = F  | B  | U  | D  | L  | R
           | F' | B' | U' | D' | L' | R' deriving (Show,Bounded,Enum)
 
-_allMoves :: [Move]
-_allMoves = [minBound..maxBound]
+--_allMoves :: [Move]
+--_allMoves = [minBound..maxBound]
 
 _clocks :: [Move]
 _clocks = [F,B,U,D,L,R]
 
-move :: State -> Move -> State
-move = flip $ \case
+_antis :: [Move]
+_antis = [F',B',U',D',L',R']
+
+applyMove :: State -> Move -> State
+applyMove = flip $ \case
   F -> clock Front
   B -> clock Back
   U -> clock Up
@@ -233,7 +302,7 @@ anti face = clock face . clock face . clock face
 ----------------------------------------------------------------------
 -- cube state
 
--- TODO: rename State -> Node
+-- TODO: rename State -> Node.. or better: Cube, or Cube2
 
 data Dim = X | Y | Z
 
