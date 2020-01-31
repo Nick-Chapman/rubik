@@ -3,11 +3,15 @@ module Main (main) where
 
 import Control.Monad (when)
 import Data.Map (Map)
-import Data.Set (Set)
 import Prelude hiding (Left,Right)
 import System.Environment (getArgs)
 import qualified Data.Map.Strict as Map
+
+import Data.Set (Set)
 import qualified Data.Set as Set
+
+--import Data.HashSet -- (Set)
+--import qualified Data.Set as Set
 
 ----------------------------------------------------------------------
 {- TODO: experiments...
@@ -32,9 +36,11 @@ main = do
   let desc = parseArgs desc0 args
   print desc
 
+  let seq = concat $ repeat [R,U,F,R,F',R',U',F,R',F,U,R,F'] -- TODO, random?
+
   let Desc{scrambleLength,atomicMoves} = desc
   let graph = mkGraph atomicMoves
-  let scrambleSequence = take scrambleLength [R,U,L,R,B,L',U',F,D,F] -- TODO: need more for >10
+  let scrambleSequence = take scrambleLength seq
   let scrambledState = foldl applyMove solvedState scrambleSequence
 
   print scrambleSequence
@@ -62,8 +68,8 @@ data Desc = Desc
 
 desc0 :: Desc
 desc0 = Desc
-  { scrambleLength = 8
-  , atomicMoves = _clocks ++ _antis
+  { scrambleLength = 10
+  , atomicMoves = _fur
   , seeSearchEvery = 10000
   , trackExpanded = False
   , heuristic = GH
@@ -79,6 +85,9 @@ parseArgs desc = \case
   "-8":rest      -> parseArgs (desc { scrambleLength = 8 }) rest
   "-9":rest      -> parseArgs (desc { scrambleLength = 9 }) rest
   "-10":rest     -> parseArgs (desc { scrambleLength = 10 }) rest
+  "-11":rest     -> parseArgs (desc { scrambleLength = 11 }) rest
+  "-12":rest     -> parseArgs (desc { scrambleLength = 12 }) rest
+  "-13":rest     -> parseArgs (desc { scrambleLength = 13 }) rest
   "--len":n:rest -> parseArgs (desc { scrambleLength = read n }) rest
 
   "--see":rest   -> parseArgs (desc { seeSearchEvery = 1 }) rest
@@ -89,6 +98,16 @@ parseArgs desc = \case
 
   "--ex":rest    -> parseArgs (desc { trackExpanded = True }) rest
   "--bfs":rest   -> parseArgs (desc { heuristic = JustG }) rest
+
+  "--f":rest     -> parseArgs (desc { atomicMoves = _f }) rest
+  "--fu":rest    -> parseArgs (desc { atomicMoves = _fu }) rest
+  "--fu2":rest   -> parseArgs (desc { atomicMoves = _fu2 }) rest
+  "--fur2":rest  -> parseArgs (desc { atomicMoves = _fur2 }) rest
+
+  "--fur":rest   -> parseArgs (desc { atomicMoves = _fur }) rest
+  "--furA":rest   -> parseArgs (desc { atomicMoves = _fur ++ _fur' }) rest
+  "--furH":rest   -> parseArgs (desc { atomicMoves = _fur ++ _fur2 }) rest
+  "--furAH":rest   -> parseArgs (desc { atomicMoves = _fur ++ _fur2 ++ _fur' }) rest
 
   args -> error $ "parseArgs: " <> show args
 
@@ -120,7 +139,7 @@ viewSearch desc@Desc{seeSearchEvery} graph scrambled = loop 0 (mkInitSS scramble
     loop i ss = do
       when (i `mod` seeSearchEvery == 0) $ see i ss;
       case searchStep desc graph ss of
-        Fail -> error "Search failed!"
+        Fail -> error $ "Search failed after " <> show i <> " steps."
         Success elem -> return (i,elem)
         Continue ss -> loop (i+1) ss
 
@@ -262,41 +281,67 @@ searchStep
         Nothing -> Nothing
         Just res@(Elem _ state, frontier') ->
           -- dont understand how this True can reduce the #steps !
-          if True || state `notElem` expanded then Just res else
+          --if True || state `notElem` expanded then Just res else
+          if state `notElem` expanded then Just res else
             pickUnexpanded frontier'
 
 ----------------------------------------------------------------------
 -- moves
 
-data Move = F  | B  | U  | D  | L  | R
-          | F' | B' | U' | D' | L' | R' deriving (Show,Bounded,Enum)
+{-data Move = F  | B  | U  | D  | L  | R
+          | F' | B' | U' | D' | L' | R' deriving (Show,Bounded,Enum)-}
 
---_allMoves :: [Move]
---_allMoves = [minBound..maxBound]
+data Move = F  | U  | R  | B  | D  | L
+          | F' | U' | R' | B' | D' | L'
+          | F2 | U2 | R2 | B2 | D2 | L2
+  deriving (Show,Enum)
 
-_clocks :: [Move]
-_clocks = [F,B,U,D,L,R]
+_f :: [Move]
+_f = [F]
 
-_antis :: [Move]
-_antis = [F',B',U',D',L',R']
+_fu :: [Move]
+_fu = [F,U]
+
+_fur :: [Move]
+_fur = [F,U,R]
+
+_fur' :: [Move]
+_fur' = [F',U',R']
+
+_fu2 :: [Move]
+_fu2 = [F2,U2]
+
+_fur2 :: [Move]
+_fur2 = [F2,U2,R2]
 
 applyMove :: State -> Move -> State
 applyMove = flip $ \case
   F -> clock Front
-  B -> clock Back
   U -> clock Up
+  R -> clock Right
+  B -> clock Back
   D -> clock Down
   L -> clock Left
-  R -> clock Right
+
   F'-> anti Front
-  B'-> anti Back
   U'-> anti Up
+  R'-> anti Right
+  B'-> anti Back
   D'-> anti Down
   L'-> anti Left
-  R'-> anti Right
+
+  F2 -> half Front
+  U2 -> half Up
+  R2 -> half Right
+  B2 -> half Back
+  D2 -> half Down
+  L2 -> half Left
 
 anti :: Face -> State -> State
 anti face = clock face . clock face . clock face
+
+half :: Face -> State -> State
+half face = clock face . clock face
 
 
 ----------------------------------------------------------------------
@@ -314,9 +359,9 @@ data CornerPiece = WBR | WBO | WGR | WGO | YBR | YBO | YGR | YGO deriving (Eq,Or
 
 data Face = Front | Back | Up | Down | Left | Right deriving Show
 
-type OC = (CornerPiece,CornerOrientation)
+data OC = OC !CornerPiece !CornerOrientation deriving (Eq,Ord,Show)
 
-data State = State { ful, fur, fdl, fdr, bul, bur, bdl, bdr :: OC} deriving (Eq,Ord,Show)
+data State = State { ful, fur, fdl, fdr, bul, bur, bdl, bdr :: !OC} deriving (Eq,Ord,Show)
 
 
 distance :: State -> State -> Int
@@ -328,15 +373,16 @@ distance s1 s2 = do
 
 solvedState :: State
 solvedState = State
-  { ful = (WBR, Yzx)
-  , fur = (WBO, Yzx)
-  , bul = (WGR, Yzx)
-  , bur = (WGO, Yzx)
-  , fdl = (YBR, Yzx)
-  , fdr = (YBO, Yzx)
-  , bdl = (YGR, Yzx)
-  , bdr = (YGO, Yzx)
-  }
+  { ful = oc (WBR, Yzx)
+  , fur = oc (WBO, Yzx)
+  , bul = oc (WGR, Yzx)
+  , bur = oc (WGO, Yzx)
+  , fdl = oc (YBR, Yzx)
+  , fdr = oc (YBO, Yzx)
+  , bdl = oc (YGR, Yzx)
+  , bdr = oc (YGO, Yzx)
+  } where
+  oc (c,o) = OC c o
 
 clock :: Face -> State -> State
 clock = \case
@@ -347,9 +393,9 @@ clock = \case
   Left  -> \state@State{bul=a,ful=b,fdl=c,bdl=d} -> state {bul=x d,ful=x a,fdl=x b,bdl=x c}
   Right -> \state@State{fur=a,bur=b,bdr=c,fdr=d} -> state {fur=x d,bur=x a,bdr=x b,fdr=x c}
   where
-    x (piece,orientation) = (piece,rotate X orientation)
-    y (piece,orientation) = (piece,rotate Y orientation)
-    z (piece,orientation) = (piece,rotate Z orientation)
+    x (OC piece orientation) = OC piece (rotate X orientation)
+    y (OC piece orientation) = OC piece (rotate Y orientation)
+    z (OC piece orientation) = OC piece (rotate Z orientation)
 
 rotate :: Dim -> CornerOrientation -> CornerOrientation
 rotate = \case
@@ -393,7 +439,7 @@ square :: Dim -> OC -> OC -> OC -> OC -> Square
 square q a b c d = Square (sticker q a) (sticker q b) (sticker q c) (sticker q d)
 
 sticker :: Dim -> OC -> Col
-sticker q (piece,orientation) = unstick (chooseSticker q orientation) piece
+sticker q (OC piece orientation) = unstick (chooseSticker q orientation) piece
 
 chooseSticker :: Dim -> CornerOrientation -> Sticker
 chooseSticker = \case
