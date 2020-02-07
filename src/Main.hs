@@ -48,7 +48,10 @@ main = do
   --let seq = concat $ repeat [R,U,F,R,F',R',U',F,R',F,U,R,F'] -- TODO, random?
   --let scrambleSequence = take scrambleLength seq
 
-  scrambleSequence <- randomShuffle scrambleLength
+  _scrambleSequence <- randomShuffle scrambleLength
+
+  let scrambleSequence = [U,R2,R',R,R,F',R,U',R,F,R,U,R',F2,F',F,F',R',U',F',U',R',U',U,R',R2,U',U2,U2,R,F2,R2,U,F',R',F',F,U2,U',U',F,U',F,F2,U,F,R2,R',F',F2,F,R,F',U',F2,F',R2,F',F,R',U',F',R,U,U2,U,U',R',R,R2,U2,R',R',F',F,U',U,R,F,R2,F',F,R,F,U',R,R',F,R2,R',U,R',U',F,F',R2,F2,R2,U2,U2]
+
 
   let scrambledState = foldl applyMove solvedState scrambleSequence
 
@@ -79,7 +82,7 @@ randomShuffle n = sequence $ take n $ repeat randomMove
 
 ----------------------------------------------------------------------
 
-data Heuristic = GH | JustG deriving Show
+data Heuristic = GH | JustG | AdmisH deriving Show
 
 data Desc = Desc
   { scrambleLength :: Int
@@ -129,6 +132,7 @@ parseArgs desc = \case
 
   "--ex":rest    -> parseArgs (desc { trackExpanded = True }) rest
   "--bfs":rest   -> parseArgs (desc { heuristic = JustG }) rest
+  "--admis":rest   -> parseArgs (desc { heuristic = AdmisH }) rest
 
   "--f":rest     -> parseArgs (desc { atomicMoves = _f }) rest
   "--fu":rest    -> parseArgs (desc { atomicMoves = _fu }) rest
@@ -151,6 +155,13 @@ computeScoreGH (Elem path state) = do
   let h = distance solvedState state
   Score (g + h) -- using path-length + distance-to-target heuristic
 
+
+computeScoreAdmisH :: Elem -> Score
+computeScoreAdmisH (Elem path state) = do
+  let g = pathLength path
+  let h = distance solvedState state
+  Score (4 * g + h)
+
 computeScoreG :: Elem -> Score
 computeScoreG (Elem path _) = do
   let g = pathLength path
@@ -160,6 +171,7 @@ computeScore :: Heuristic -> Elem -> Score
 computeScore = \case
   GH -> computeScoreGH
   JustG -> computeScoreG
+  AdmisH -> computeScoreAdmisH
 
 ----------------------------------------------------------------------
 
