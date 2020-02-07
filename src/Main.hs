@@ -38,8 +38,14 @@ main = do
 
   let seq = concat $ repeat [R,U,F,R,F',R',U',F,R',F,U,R,F'] -- TODO, random?
 
-  let Desc{scrambleLength,atomicMoves} = desc
-  let graph = mkGraph atomicMoves
+  let Desc{scrambleLength,atomicMoves,allowSameFaceTwiceInRow} = desc
+  let graph =
+        if allowSameFaceTwiceInRow
+        then mkGraph atomicMoves
+        else mkGraph' atomicMoves
+
+  if doPreSearch desc then preSearchShow graph else do
+
   let scrambleSequence = take scrambleLength seq
   let scrambledState = foldl applyMove solvedState scrambleSequence
 
@@ -64,20 +70,28 @@ data Desc = Desc
   , seeSearchEvery :: Int
   , trackExpanded :: Bool
   , heuristic :: Heuristic
+  , doPreSearch :: Bool
+  , allowSameFaceTwiceInRow :: Bool -- makes search much worse!
   } deriving Show
 
 desc0 :: Desc
 desc0 = Desc
   { scrambleLength = 10
-  , atomicMoves = _fur
+  , atomicMoves = _fur ++ _fur2 ++ _fur'
   , seeSearchEvery = 10000
   , trackExpanded = False
   , heuristic = GH
+  , doPreSearch = False
+  , allowSameFaceTwiceInRow = False
   }
 
 parseArgs :: Desc -> [String] -> Desc
 parseArgs desc = \case
   [] -> desc
+
+  "--pre":rest -> parseArgs (desc { doPreSearch = True }) rest
+  "--sameFace":rest -> parseArgs (desc { allowSameFaceTwiceInRow = True }) rest
+
   "-4":rest      -> parseArgs (desc { scrambleLength = 4 }) rest
   "-5":rest      -> parseArgs (desc { scrambleLength = 5 }) rest
   "-6":rest      -> parseArgs (desc { scrambleLength = 6 }) rest
@@ -190,13 +204,54 @@ instance Show Score where
 ----------------------------------------------------------------------
 -- Graph
 
-data Graph = Graph { links :: State -> [(Move,State)]
+data Graph = Graph { links :: Path -> State -> [(Move,State)]
                    , target :: State -> Bool }
 
 mkGraph :: [Move] -> Graph
-mkGraph moves = Graph { links = \s -> map (\m -> (m, applyMove s m)) moves
+mkGraph moves = Graph { links = \_ s -> map (\m -> (m, applyMove s m)) moves
                       , target = \s -> s == solvedState
                       }
+
+----------------------------------------------------------------------
+-- graph with reduced links - never turn the same fact twice in a row
+
+mkGraph' :: [Move] -> Graph
+mkGraph' moves = Graph { links = \path s ->
+                           map (\m -> (m, applyMove s m)) (filter (allowOnPath path) moves)
+                       , target = \s -> s == solvedState
+                       }
+  where
+    allowOnPath path move = do
+      case lastMove path of
+        Nothing -> True
+        Just move1 -> faceOf move1 /= faceOf move
+
+lastMove :: Path -> Maybe Move
+lastMove Path{inReverse} = case inReverse of [] -> Nothing; m:_ -> Just m
+
+faceOf :: Move -> Face
+faceOf = \case
+  F -> Front
+  U -> Up
+  R -> Right
+  B -> Back
+  D -> Down
+  L -> Left
+
+  F'-> Front
+  U'-> Up
+  R'-> Right
+  B'-> Back
+  D'-> Down
+  L'-> Left
+
+  F2 -> Front
+  U2 -> Up
+  R2 -> Right
+  B2 -> Back
+  D2 -> Down
+  L2 -> Left
+
 ----------------------------------------------------------------------
 -- Frontier
 
@@ -273,7 +328,7 @@ searchStep
     fr1 = foldl extend fr0 newElems
       where extend fr e = extendFrontier fr (computeScore heuristic e) e
 
-    newElems = [ Elem (postPend path m) n | (m,n) <- links state, n `notElem` expanded]
+    newElems = [ Elem (postPend path m) n | (m,n) <- links path state, n `notElem` expanded]
 
     pickUnexpanded :: Frontier -> Maybe (Elem,Frontier)
     pickUnexpanded frontier =
@@ -357,7 +412,7 @@ data CornerOrientation = Xyz | Xzy | Yxz | Yzx | Zxy | Zyx deriving (Eq,Ord,Show
 
 data CornerPiece = WBR | WBO | WGR | WGO | YBR | YBO | YGR | YGO deriving (Eq,Ord,Show)
 
-data Face = Front | Back | Up | Down | Left | Right deriving Show
+data Face = Front | Back | Up | Down | Left | Right deriving (Eq,Show)
 
 data OC = OC !CornerPiece !CornerOrientation deriving (Eq,Ord,Show)
 
@@ -456,3 +511,33 @@ unstick = \case
   Third  -> \case WBR -> r; WBO -> o; WGR -> r; WGO -> o; YBR -> r; YBO -> o; YGR -> r; YGO -> o;
   where
     w = White; y = Yellow; b = Blue; g = Green; r = Red; o = Orange
+
+
+----------------------------------------------------------------------
+-- iterated dfs, looking for less disruptive atoms to use as atoms
+
+newtype Disruption = Disruption Int deriving (Eq,Num,Ord,Show)
+
+preSearchShow :: Graph -> IO ()
+preSearchShow g = do
+  mapM_ print $ map justPD $ filterUniqState Set.empty $ filter lowDisruption (preSearch g) where
+    lowDisruption (_,_,d) = d==2
+    justPD (p,_,d) = (p,d)
+
+filterUniqState :: Set State -> [(Path,State,Disruption)] -> [(Path,State,Disruption)]
+filterUniqState set = \case
+  [] -> []
+  psd@(_,s,_):rest ->
+    if s `elem` set then filterUniqState set rest else
+      psd : filterUniqState (Set.insert s set) rest
+
+preSearch :: Graph -> [(Path,State,Disruption)]
+preSearch g = [ psd | n <- [0..], psd <- dfs g n ]
+
+dfs :: Graph -> Int -> [(Path,State,Disruption)]
+dfs Graph{links} depth = search emptyPath solvedState 0 where
+  search :: Path -> State -> Int -> [(Path,State,Disruption)]
+  search path state i =
+    if i == depth then [(path, state, Disruption $ distance solvedState state)]
+    else [ pd | (m,state') <- links path state, pd <- search (postPend path m) state' (i+1) ]
+
