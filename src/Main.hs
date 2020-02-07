@@ -4,6 +4,7 @@ module Main (main) where
 import Control.Monad (when)
 import Data.Map (Map)
 import Prelude hiding (Left,Right)
+import System.Random
 import System.Environment (getArgs)
 import qualified Data.Map.Strict as Map
 
@@ -36,8 +37,6 @@ main = do
   let desc = parseArgs desc0 args
   print desc
 
-  let seq = concat $ repeat [R,U,F,R,F',R',U',F,R',F,U,R,F'] -- TODO, random?
-
   let Desc{scrambleLength,atomicMoves,allowSameFaceTwiceInRow} = desc
   let graph =
         if allowSameFaceTwiceInRow
@@ -46,7 +45,11 @@ main = do
 
   if doPreSearch desc then preSearchShow graph else do
 
-  let scrambleSequence = take scrambleLength seq
+  --let seq = concat $ repeat [R,U,F,R,F',R',U',F,R',F,U,R,F'] -- TODO, random?
+  --let scrambleSequence = take scrambleLength seq
+
+  scrambleSequence <- randomShuffle scrambleLength
+
   let scrambledState = foldl applyMove solvedState scrambleSequence
 
   print scrambleSequence
@@ -59,6 +62,20 @@ main = do
   let final = foldl applyMove scrambledState (reverse steps)
   putStrLn $ "Check: " <> show (final == solvedState)
   putStrLn $ unlines (_prettyState final)
+
+
+----------------------------------------------------------------------
+
+randomShuffle :: Int -> IO [Move]
+randomShuffle n = sequence $ take n $ repeat randomMove
+  where
+    randomMove :: IO Move
+    randomMove = randomListPick furAH
+
+    randomListPick :: [a] -> IO a
+    randomListPick xs = do
+      n <- getStdRandom (randomR (0,length xs - 1))
+      return (xs !! n)
 
 ----------------------------------------------------------------------
 
@@ -76,8 +93,8 @@ data Desc = Desc
 
 desc0 :: Desc
 desc0 = Desc
-  { scrambleLength = 10
-  , atomicMoves = _fur ++ _fur2 ++ _fur'
+  { scrambleLength = 100
+  , atomicMoves = furAH
   , seeSearchEvery = 10000
   , trackExpanded = False
   , heuristic = GH
@@ -121,7 +138,7 @@ parseArgs desc = \case
   "--fur":rest   -> parseArgs (desc { atomicMoves = _fur }) rest
   "--furA":rest   -> parseArgs (desc { atomicMoves = _fur ++ _fur' }) rest
   "--furH":rest   -> parseArgs (desc { atomicMoves = _fur ++ _fur2 }) rest
-  "--furAH":rest   -> parseArgs (desc { atomicMoves = _fur ++ _fur2 ++ _fur' }) rest
+  "--furAH":rest   -> parseArgs (desc { atomicMoves = furAH }) rest
 
   args -> error $ "parseArgs: " <> show args
 
@@ -368,6 +385,10 @@ _fu2 = [F2,U2]
 
 _fur2 :: [Move]
 _fur2 = [F2,U2,R2]
+
+furAH :: [Move]
+furAH = _fur ++ _fur2 ++ _fur'
+
 
 applyMove :: State -> Move -> State
 applyMove = flip $ \case
